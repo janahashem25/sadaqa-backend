@@ -14,6 +14,7 @@ const allowedOrigins = [
   "http://localhost:3001",
   "http://localhost:5174",
   "https://sadaqa-frontend.onrender.com",
+  "https://sadaqa-nine.vercel.app"
 ];
 
 app.use(
