@@ -1,0 +1,88 @@
+const express = require("express");
+const router = express.Router();
+const Category = require("../models/Category");
+const { protect, adminOnly } = require("../middleware/auth");
+
+// GET /api/categories — public
+router.get("/", async (req, res) => {
+  try {
+    const filter = req.query.includeInactive === "true" ? {} : { isActive: true };
+    const categories = await Category.find(filter).sort({ order: 1, name: 1 });
+    res.json(categories);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/categories/:id — public
+router.get("/:id", async (req, res) => {
+  try {
+    const cat = await Category.findById(req.params.id);
+    if (!cat) return res.status(404).json({ message: "Category not found" });
+    res.json(cat);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// POST /api/categories — admin only
+router.post("/", protect, adminOnly, async (req, res) => {
+  try {
+    const { name, slug, emoji, description, nameAr, descriptionAr, icon, image } = req.body;
+    const exists = await Category.findOne({ slug });
+    if (exists) return res.status(400).json({ message: "Category already exists" });
+    const cat = await Category.create({
+      name,
+      slug,
+      emoji: emoji || icon || "",
+      icon: icon || emoji || "",
+      description: description || "",
+      nameAr: nameAr || "",
+      descriptionAr: descriptionAr || "",
+      image: image || "",
+    });
+    res.status(201).json(cat);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// PUT /api/categories/:id — admin only
+router.put("/:id", protect, adminOnly, async (req, res) => {
+  try {
+    const updates = { ...req.body };
+
+    if (updates.emoji && !updates.icon) {
+      updates.icon = updates.emoji;
+    }
+    if (updates.icon && !updates.emoji) {
+      updates.emoji = updates.icon;
+    }
+    if (updates.is_active !== undefined) {
+      updates.isActive = updates.is_active;
+      delete updates.is_active;
+    }
+
+    const cat = await Category.findByIdAndUpdate(req.params.id, updates, {
+      new: true,
+      runValidators: true,
+    });
+    if (!cat) return res.status(404).json({ message: "Category not found" });
+    res.json(cat);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// DELETE /api/categories/:id — admin only
+router.delete("/:id", protect, adminOnly, async (req, res) => {
+  try {
+    const cat = await Category.findByIdAndDelete(req.params.id);
+    if (!cat) return res.status(404).json({ message: "Category not found" });
+    res.json({ message: "Category deleted" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+module.exports = router;
