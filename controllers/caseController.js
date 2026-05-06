@@ -1,5 +1,11 @@
 const Case = require("../models/Case");
 const Category = require("../models/Category");
+const {
+  uploadToCloudinary,
+  uploadMultipleToCloudinary,
+  deleteCloudinaryImages,
+  findRemovedImages,
+} = require("../utils/cloudinaryProcessor");
 
 // ==================== PUBLIC CONTROLLERS ====================
 
@@ -215,6 +221,35 @@ exports.createCase = async (req, res) => {
         .json({ success: false, message: "Category not found" });
     }
 
+    // ── Main image ──────────────────────────────────────────────────────────
+    // Priority: uploaded file > URL string from body
+    let imageUrl = image || "";
+    if (req.files?.image?.[0]) {
+      const result = await uploadToCloudinary(req.files.image[0].buffer, {
+        folder: "cases",
+      });
+      imageUrl = result.secure_url;
+    }
+    if (!imageUrl) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Case image is required" });
+    }
+
+    // ── Gallery ─────────────────────────────────────────────────────────────
+    // Keep any valid URL strings from body, then upload new file(s)
+    let galleryUrls = [];
+    if (gallery) {
+      const arr = Array.isArray(gallery) ? gallery : [gallery];
+      galleryUrls = arr.filter((u) => u && typeof u === "string");
+    }
+    if (req.files?.gallery?.length) {
+      const uploaded = await uploadMultipleToCloudinary(req.files.gallery, {
+        folder: "cases/gallery",
+      });
+      galleryUrls.push(...uploaded);
+    }
+
     const newCase = await Case.create({
       user_id: req.user._id,
       title,
@@ -224,8 +259,8 @@ exports.createCase = async (req, res) => {
       category,
       goalAmount,
       currentAmount: 0,
-      image,
-      gallery: gallery || [],
+      image: imageUrl,
+      gallery: galleryUrls,
       location: location || {},
       urgency: urgency || "medium",
       // Admins create cases that go live immediately; regular users need approval
@@ -279,22 +314,69 @@ exports.updateCase = async (req, res) => {
         .json({ success: false, message: "Not authorized to update this case" });
     }
 
+    const updates = { ...req.body };
+
     // Strip fields that shouldn't be updated via this endpoint
-    delete req.body._id;
-    delete req.body.createdAt;
-    delete req.body.currentAmount;
-    delete req.body.user_id;
+    delete updates._id;
+    delete updates.createdAt;
+    delete updates.currentAmount;
+    delete updates.user_id;
 
     // Non-admins can't change moderation fields
     if (req.user.role !== "admin") {
-      delete req.body.status;
-      delete req.body.isActive;
-      delete req.body.isFeatured;
+      delete updates.status;
+      delete updates.isActive;
+      delete updates.isFeatured;
     }
+
+    // ── Main image ──────────────────────────────────────────────────────────
+    if (req.files?.image?.[0]) {
+      const result = await uploadToCloudinary(req.files.image[0].buffer, {
+        folder: "cases",
+      });
+      updates.image = result.secure_url;
+      // Delete the old main image from Cloudinary (best-effort)
+      if (caseItem.image) {
+        deleteCloudinaryImages([caseItem.image]).catch(console.error);
+      }
+    }
+
+    // ── Gallery ─────────────────────────────────────────────────────────────
+    // Only touch gallery when the client sends an update (body.gallery or new files)
+    if (req.files?.gallery?.length || updates.gallery !== undefined) {
+      const oldGallery = caseItem.gallery || [];
+
+      // Collect URLs the client wants to keep
+      let keptUrls = [];
+      if (updates.gallery !== undefined) {
+        const arr = Array.isArray(updates.gallery)
+          ? updates.gallery
+          : [updates.gallery];
+        keptUrls = arr.filter((u) => u && typeof u === "string");
+      }
+
+      // Upload any newly attached files
+      let uploadedUrls = [];
+      if (req.files?.gallery?.length) {
+        uploadedUrls = await uploadMultipleToCloudinary(req.files.gallery, {
+          folder: "cases/gallery",
+        });
+      }
+
+      updates.gallery = [...keptUrls, ...uploadedUrls];
+
+      // Clean up images the client no longer wants (best-effort)
+      const removed = findRemovedImages(oldGallery, updates.gallery);
+      if (removed.length) {
+        deleteCloudinaryImages(removed).catch(console.error);
+      }
+    }
+
+    updates.updatedAt = Date.now();
 
     const updated = await Case.findByIdAndUpdate(
       req.params.id,
-      { ...req.body, updatedAt: Date.now() },
+      updates,
       { new: true, runValidators: true }
     );
 

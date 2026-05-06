@@ -5,6 +5,11 @@ const User = require("../models/User");
 const Donation = require("../models/Donation");
 const ItemDonation = require("../models/ItemDonation");
 const { protect, adminOnly } = require("../middleware/auth");
+const { handleCaseUploadErrors } = require("../middleware/uploadMiddleware");
+const {
+  uploadToCloudinary,
+  uploadMultipleToCloudinary,
+} = require("../utils/cloudinaryProcessor");
 
 // All admin routes require auth + admin role
 router.use(protect, adminOnly);
@@ -111,10 +116,34 @@ router.put("/cases/:id/restore", async (req, res) => {
 });
 
 // POST /api/admin/cases — add case directly
-router.post("/cases", async (req, res) => {
+router.post("/cases", handleCaseUploadErrors, async (req, res) => {
   try {
+    // ── Main image ───────────────────────────────────────────────────────────
+    let imageUrl = req.body.image || "";
+    if (req.files?.image?.[0]) {
+      const result = await uploadToCloudinary(req.files.image[0].buffer, {
+        folder: "cases",
+      });
+      imageUrl = result.secure_url;
+    }
+
+    // ── Gallery ──────────────────────────────────────────────────────────────
+    let galleryUrls = [];
+    if (req.body.gallery) {
+      const arr = Array.isArray(req.body.gallery) ? req.body.gallery : [req.body.gallery];
+      galleryUrls = arr.filter((u) => u && typeof u === "string");
+    }
+    if (req.files?.gallery?.length) {
+      const uploaded = await uploadMultipleToCloudinary(req.files.gallery, {
+        folder: "cases/gallery",
+      });
+      galleryUrls.push(...uploaded);
+    }
+
     const c = await Case.create({
       ...req.body,
+      image: imageUrl,
+      gallery: galleryUrls,
       titleAr: req.body.titleAr || req.body.title,
       descriptionAr: req.body.descriptionAr || req.body.description || "",
       status: req.body.status || "active",

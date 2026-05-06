@@ -3,6 +3,7 @@ const router = express.Router();
 const { protect } = require("../middleware/auth");
 const { adminOnly } = require("../middleware/adminOnly");
 const caseController = require("../controllers/caseController");
+const { handleCaseUploadErrors } = require("../middleware/uploadMiddleware");
 
 // ==================== PUBLIC ROUTES ====================
 router.get("/", caseController.getAllCases);
@@ -12,9 +13,9 @@ router.get("/search/query", caseController.searchCases);
 router.get("/category/:categoryId", caseController.getCasesByCategory);
 
 // ==================== PROTECTED ROUTES (USER) ====================
-router.post("/", protect, caseController.createCase);
+router.post("/", protect, handleCaseUploadErrors, caseController.createCase);
 router.get("/my/requests", protect, caseController.getMyCases);
-router.put("/:id", protect, caseController.updateCase);
+router.put("/:id", protect, handleCaseUploadErrors, caseController.updateCase);
 router.patch("/:id/donate", protect, caseController.donateToCase);
 
 // ==================== ADMIN ONLY ROUTES ====================

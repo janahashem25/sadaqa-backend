@@ -4,6 +4,7 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 const Category = require("./models/Category");
 const defaultCategories = require("./defaultCategories");
+const { verifyCloudinaryConfig, pingCloudinary } = require("./config/cloudinary");
 
 dotenv.config();
 
@@ -55,6 +56,35 @@ app.get("/health", (req, res) =>
   res.json({ status: "OK", timestamp: new Date() })
 );
 
+// ── Cloudinary debug endpoint ────────────────────────────────────────────────
+// GET /debug/cloudinary
+// Runs a live authenticated ping to Cloudinary and returns the result.
+// Remove or protect this route before going to production if needed.
+app.get("/debug/cloudinary", async (req, res) => {
+  const { cloud_name, api_key, api_secret } = require("./config/cloudinary").cloudinary.config
+    ? require("./config/cloudinary").cloudinary.config()
+    : {};
+
+  const configPresent = {
+    CLOUDINARY_CLOUD_NAME: !!cloud_name,
+    CLOUDINARY_API_KEY:    !!api_key,
+    CLOUDINARY_API_SECRET: !!api_secret,
+  };
+
+  const ping = await pingCloudinary();
+
+  res.status(ping.ok ? 200 : 503).json({
+    configPresent,          // which env vars are loaded (values hidden)
+    cloud: ping.cloud,      // cloud name is safe to display
+    connected: ping.ok,
+    status: ping.status,
+    latencyMs: ping.latencyMs,
+    ...(ping.error ? { error: ping.error } : {}),
+    checkedAt: new Date().toISOString(),
+  });
+});
+// ────────────────────────────────────────────────────────────────────────────
+
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -95,13 +125,18 @@ const ensureDefaultCategories = async () => {
   }
 };
 
+// ── Cloudinary connectivity check (runs immediately, independent of DB) ──────
+verifyCloudinaryConfig();   // fast env-var check (no network)
+pingCloudinary();           // live API ping (async, non-blocking)
+// ─────────────────────────────────────────────────────────────────────────────
+
 mongoose
   .connect(process.env.MONGO_URI)
   .then(async () => {
     console.log("MongoDB connected successfully");
-     console.log("Mongo connected to:");
-  console.log("Host:", mongoose.connection.host);
-  console.log("DB:", mongoose.connection.name);
+    console.log("Host:", mongoose.connection.host);
+    console.log("DB:  ", mongoose.connection.name);
+
     await ensureDefaultCategories();
 
     app.listen(PORT, () => {

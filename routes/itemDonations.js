@@ -1,6 +1,8 @@
 const express = require("express");
 const ItemDonation = require("../models/ItemDonation");
 const { protect } = require("../middleware/auth");
+const { handleSubcategoryUploadErrors } = require("../middleware/uploadMiddleware");
+const { uploadToCloudinary } = require("../utils/cloudinaryProcessor");
 
 const router = express.Router();
 
@@ -30,7 +32,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.post("/", protect, async (req, res) => {
+router.post("/", protect, handleSubcategoryUploadErrors, async (req, res) => {
   try {
     const {
       title,
@@ -49,6 +51,13 @@ router.post("/", protect, async (req, res) => {
       return res.status(400).json({ success: false, message: "Title, description, category, and city are required" });
     }
 
+    // Upload image file if provided; otherwise fall back to URL from body
+    let imageUrl = image || "";
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, { folder: "item-donations" });
+      imageUrl = result.secure_url;
+    }
+
     const item = await ItemDonation.create({
       donor_id: req.user._id,
       title,
@@ -57,7 +66,7 @@ router.post("/", protect, async (req, res) => {
       itemType: itemType || category,
       condition: condition || "good",
       quantity: Number(quantity) > 0 ? Number(quantity) : 1,
-      image: image || "",
+      image: imageUrl,
       location: {
         city: location.city,
         country: location.country || "Lebanon",
