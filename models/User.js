@@ -10,6 +10,8 @@ const userSchema = new mongoose.Schema({
   city:          { type: String, default: "" },
   bio:           { type: String, default: "" },
   is_active:     { type: Boolean, default: true },
+  reset_password_token: { type: String, default: null },
+  reset_password_expires: { type: Date, default: null },
 }, { timestamps: true });
 
 // Hash password before save
