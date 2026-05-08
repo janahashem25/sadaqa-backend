@@ -121,10 +121,19 @@ router.post("/cases", handleCaseUploadErrors, async (req, res) => {
     // ── Main image ───────────────────────────────────────────────────────────
     let imageUrl = req.body.image || "";
     if (req.files?.image?.[0]) {
-      const result = await uploadToCloudinary(req.files.image[0].buffer, {
-        folder: "cases",
-      });
-      imageUrl = result.secure_url;
+      try {
+        const result = await uploadToCloudinary(req.files.image[0].buffer, {
+          folder: "cases",
+        });
+        imageUrl = result.secure_url || "";
+      } catch (uploadError) {
+        console.error("Admin case image upload failed:", uploadError);
+        return res.status(502).json({ message: "Case image upload failed. Please try again." });
+      }
+    }
+
+    if (!imageUrl) {
+      return res.status(400).json({ message: "Case image is required" });
     }
 
     // ── Gallery ──────────────────────────────────────────────────────────────
@@ -134,10 +143,15 @@ router.post("/cases", handleCaseUploadErrors, async (req, res) => {
       galleryUrls = arr.filter((u) => u && typeof u === "string");
     }
     if (req.files?.gallery?.length) {
-      const uploaded = await uploadMultipleToCloudinary(req.files.gallery, {
-        folder: "cases/gallery",
-      });
-      galleryUrls.push(...uploaded);
+      try {
+        const uploaded = await uploadMultipleToCloudinary(req.files.gallery, {
+          folder: "cases/gallery",
+        });
+        galleryUrls.push(...uploaded);
+      } catch (uploadError) {
+        console.error("Admin case gallery upload failed:", uploadError);
+        return res.status(502).json({ message: "Case gallery upload failed. Please try again." });
+      }
     }
 
     const c = await Case.create({

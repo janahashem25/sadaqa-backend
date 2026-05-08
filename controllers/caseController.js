@@ -313,9 +313,14 @@ exports.createCase = async (req, res) => {
         imageUrl = imageResult.secure_url || "";
       } catch (uploadError) {
         console.error("Case image upload failed:", uploadError);
+        return res.status(502).json({ success: false, message: "Case image upload failed. Please try again." });
       }
     } else if (req.body.image) {
       imageUrl = String(req.body.image).trim();
+    }
+
+    if (!imageUrl) {
+      return res.status(400).json({ success: false, message: "Case image is required" });
     }
 
     // ── Gallery ─────────────────────────────────────────────────────────────
@@ -329,6 +334,7 @@ exports.createCase = async (req, res) => {
         galleryUrls = uploaded;
       } catch (uploadError) {
         console.error("Case gallery upload failed:", uploadError);
+        return res.status(502).json({ success: false, message: "Case gallery upload failed. Please try again." });
       }
     }
 
