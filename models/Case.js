@@ -41,7 +41,7 @@ const caseSchema = new mongoose.Schema({
   },
   image: {
     type: String,
-    required: true,
+    default: "",
   },
   gallery: [String], // Multiple images
   location: {
@@ -52,6 +52,10 @@ const caseSchema = new mongoose.Schema({
     type: String,
     enum: ["low", "medium", "high", "critical"],
     default: "medium",
+  },
+  showRequesterName: {
+    type: Boolean,
+    default: true,
   },
   status: {
     type: String,

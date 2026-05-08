@@ -7,6 +7,65 @@ const {
   findRemovedImages,
 } = require("../utils/cloudinaryProcessor");
 
+const getTruthyBoolean = (value) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  const normalized = String(value || "").trim().toLowerCase();
+  return ["true", "1", "yes", "on"].includes(normalized);
+};
+
+const getShowRequesterName = (body) => {
+  if (body.showRequesterName !== undefined) {
+    return getTruthyBoolean(body.showRequesterName);
+  }
+
+  if (body.showName !== undefined) {
+    return getTruthyBoolean(body.showName);
+  }
+
+  if (body.show_name !== undefined) {
+    return getTruthyBoolean(body.show_name);
+  }
+
+  if (body.isAnonymous !== undefined) {
+    return !getTruthyBoolean(body.isAnonymous);
+  }
+
+  if (body.is_anonymous !== undefined) {
+    return !getTruthyBoolean(body.is_anonymous);
+  }
+
+  return true;
+};
+
+const getLocationPayload = (body) => {
+  if (body.location && typeof body.location === "object" && !Array.isArray(body.location)) {
+    return {
+      city: body.location.city || "",
+      country: body.location.country || "",
+    };
+  }
+
+  return {
+    city: body["location[city]"] || body.city || "",
+    country: body["location[country]"] || body.country || "",
+  };
+};
+
+const sanitizePublicCase = (caseDoc) => {
+  const sanitized = caseDoc.toObject ? caseDoc.toObject() : { ...caseDoc };
+
+  if (!sanitized.showRequesterName && sanitized.user_id) {
+    sanitized.user_id = {
+      ...sanitized.user_id,
+      full_name: "Anonymous",
+    };
+    delete sanitized.user_id.email;
+  }
+
+  return sanitized;
+};
+
 // ==================== PUBLIC CONTROLLERS ====================
 
 // Get all active cases (pagination, filtering, sorting)
@@ -56,7 +115,7 @@ exports.getAllCases = async (req, res) => {
       total,
       totalPages: Math.ceil(total / parseInt(limit)),
       currentPage: parseInt(page),
-      data: cases,
+      data: cases.map(sanitizePublicCase),
     });
   } catch (error) {
     console.error("Get all cases error:", error);
@@ -78,7 +137,7 @@ exports.getCaseById = async (req, res) => {
       return res.status(404).json({ success: false, message: "Case not found" });
     }
 
-    res.status(200).json({ success: true, data: caseItem });
+    res.status(200).json({ success: true, data: sanitizePublicCase(caseItem) });
   } catch (error) {
     console.error("Get case by ID error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -99,7 +158,11 @@ exports.getUrgentCases = async (req, res) => {
       .limit(parseInt(limit))
       .populate("category", "name nameAr");
 
-    res.status(200).json({ success: true, count: cases.length, data: cases });
+    res.status(200).json({
+      success: true,
+      count: cases.length,
+      data: cases.map(sanitizePublicCase),
+    });
   } catch (error) {
     console.error("Get urgent cases error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -120,7 +183,11 @@ exports.getFeaturedCases = async (req, res) => {
       .limit(parseInt(limit))
       .populate("category", "name nameAr");
 
-    res.status(200).json({ success: true, count: cases.length, data: cases });
+    res.status(200).json({
+      success: true,
+      count: cases.length,
+      data: cases.map(sanitizePublicCase),
+    });
   } catch (error) {
     console.error("Get featured cases error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -151,7 +218,11 @@ exports.searchCases = async (req, res) => {
       .limit(parseInt(limit))
       .populate("category", "name nameAr");
 
-    res.status(200).json({ success: true, count: cases.length, data: cases });
+    res.status(200).json({
+      success: true,
+      count: cases.length,
+      data: cases.map(sanitizePublicCase),
+    });
   } catch (error) {
     console.error("Search cases error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -186,7 +257,7 @@ exports.getCasesByCategory = async (req, res) => {
       total,
       totalPages: Math.ceil(total / parseInt(limit)),
       currentPage: parseInt(page),
-      data: cases,
+      data: cases.map(sanitizePublicCase),
     });
   } catch (error) {
     console.error("Get cases by category error:", error);
@@ -206,15 +277,26 @@ exports.createCase = async (req, res) => {
       descriptionAr,
       category,
       goalAmount,
-      image,
-      gallery,
       location,
       urgency,
       endDate,
     } = req.body;
 
+    if (!category) {
+      return res.status(400).json({ success: false, message: "Category is required" });
+    }
+
     // Validate category exists
-    const categoryExists = await Category.findById(category);
+    let categoryExists;
+    try {
+      categoryExists = await Category.findById(category);
+    } catch (err) {
+      if (err.name === "CastError" && err.path === "_id") {
+        return res.status(400).json({ success: false, message: "Category ID is invalid" });
+      }
+      throw err;
+    }
+
     if (!categoryExists) {
       return res
         .status(400)
@@ -222,32 +304,32 @@ exports.createCase = async (req, res) => {
     }
 
     // ── Main image ──────────────────────────────────────────────────────────
-    // Priority: uploaded file > URL string from body
-    let imageUrl = image || "";
+    let imageUrl = "";
     if (req.files?.image?.[0]) {
-      const result = await uploadToCloudinary(req.files.image[0].buffer, {
-        folder: "cases",
-      });
-      imageUrl = result.secure_url;
-    }
-    if (!imageUrl) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Case image is required" });
+      try {
+        const imageResult = await uploadToCloudinary(req.files.image[0].buffer, {
+          folder: "cases",
+        });
+        imageUrl = imageResult.secure_url || "";
+      } catch (uploadError) {
+        console.error("Case image upload failed:", uploadError);
+      }
+    } else if (req.body.image) {
+      imageUrl = String(req.body.image).trim();
     }
 
     // ── Gallery ─────────────────────────────────────────────────────────────
-    // Keep any valid URL strings from body, then upload new file(s)
+    // Only uploaded files
     let galleryUrls = [];
-    if (gallery) {
-      const arr = Array.isArray(gallery) ? gallery : [gallery];
-      galleryUrls = arr.filter((u) => u && typeof u === "string");
-    }
     if (req.files?.gallery?.length) {
-      const uploaded = await uploadMultipleToCloudinary(req.files.gallery, {
-        folder: "cases/gallery",
-      });
-      galleryUrls.push(...uploaded);
+      try {
+        const uploaded = await uploadMultipleToCloudinary(req.files.gallery, {
+          folder: "cases/gallery",
+        });
+        galleryUrls = uploaded;
+      } catch (uploadError) {
+        console.error("Case gallery upload failed:", uploadError);
+      }
     }
 
     const newCase = await Case.create({
@@ -261,8 +343,9 @@ exports.createCase = async (req, res) => {
       currentAmount: 0,
       image: imageUrl,
       gallery: galleryUrls,
-      location: location || {},
+      location: getLocationPayload(req.body),
       urgency: urgency || "medium",
+      showRequesterName: getShowRequesterName(req.body),
       // Admins create cases that go live immediately; regular users need approval
       status: req.user.role === "admin" ? "active" : "pending",
       isActive: true,
@@ -327,6 +410,26 @@ exports.updateCase = async (req, res) => {
       delete updates.status;
       delete updates.isActive;
       delete updates.isFeatured;
+    }
+
+    if (
+      req.body.showRequesterName !== undefined ||
+      req.body.showName !== undefined ||
+      req.body.show_name !== undefined ||
+      req.body.isAnonymous !== undefined ||
+      req.body.is_anonymous !== undefined
+    ) {
+      updates.showRequesterName = getShowRequesterName(req.body);
+    }
+
+    if (
+      req.body.location !== undefined ||
+      req.body["location[city]"] !== undefined ||
+      req.body["location[country]"] !== undefined ||
+      req.body.city !== undefined ||
+      req.body.country !== undefined
+    ) {
+      updates.location = getLocationPayload(req.body);
     }
 
     // ── Main image ──────────────────────────────────────────────────────────

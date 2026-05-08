@@ -5,6 +5,7 @@ const dotenv = require("dotenv");
 const Category = require("./models/Category");
 const defaultCategories = require("./defaultCategories");
 const { verifyCloudinaryConfig, pingCloudinary } = require("./config/cloudinary");
+const { verifyMailerConfig } = require("./config/mailer");
 
 dotenv.config();
 
@@ -100,15 +101,17 @@ app.use((err, req, res, next) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 
 const ensureDefaultCategories = async () => {
   try {
     for (const category of defaultCategories) {
       await Category.findOneAndUpdate(
-        { slug: category.slug },
         {
-          $setOnInsert: {
+          $or: [{ slug: category.slug }, { name: category.name }],
+        },
+        {
+          $set: {
             ...category,
             nameAr: category.name,
             descriptionAr: category.description,
@@ -125,8 +128,9 @@ const ensureDefaultCategories = async () => {
   }
 };
 
-// ── Cloudinary connectivity check (runs immediately, independent of DB) ──────
+// ── Cloudinary + Mailer connectivity checks (runs immediately, independent of DB) ──────
 verifyCloudinaryConfig();   // fast env-var check (no network)
+verifyMailerConfig();       // verify SMTP transport if configured
 pingCloudinary();           // live API ping (async, non-blocking)
 // ─────────────────────────────────────────────────────────────────────────────
 
