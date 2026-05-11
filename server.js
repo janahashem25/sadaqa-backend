@@ -107,7 +107,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-const PORT = 5001;
+const PORT = process.env.PORT || 5001;
 
 const ensureDefaultCategories = async () => {
   try {
