@@ -4,7 +4,16 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const { protect } = require("../middleware/auth");
-const { sendPasswordResetEmail, isMailerConfigured } = require("../config/mailer");
+const {
+  sendPasswordResetEmail,
+  sendPasswordResetSecurityNotification,
+  isMailerConfigured,
+} = require("../config/mailer");
+
+const RESET_TOKEN_TTL_MINUTES = Math.max(
+  5,
+  Number(process.env.RESET_TOKEN_TTL_MINUTES || 15)
+);
 
 const generateToken = (id) =>
   jwt.sign({ id }, process.env.JWT_SECRET, {
@@ -34,15 +43,35 @@ function getFrontendBaseUrl(req) {
   return "http://localhost:5173";
 }
 
+function shouldReturnResetDebugData() {
+  return (
+    process.env.NODE_ENV !== "production" &&
+    (process.env.SHOW_RESET_LINK === "true" || !isMailerConfigured)
+  );
+}
+
+function getRequestIp(req) {
+  const forwardedFor = String(req.headers["x-forwarded-for"] || "").trim();
+  if (forwardedFor) {
+    return forwardedFor.split(",")[0].trim();
+  }
+
+  return req.ip || req.socket?.remoteAddress || "Unavailable";
+}
+
 const resetPasswordHandler = async (req, res) => {
   try {
-    const password =
-      req.body.password || req.body.newPassword || req.body.confirmPassword;
+    const password = req.body.password || req.body.newPassword || "";
+    const confirmPassword = req.body.confirmPassword || password;
 
     if (!password || String(password).length < 6) {
       return res
         .status(400)
         .json({ message: "New password must be at least 6 characters" });
+    }
+
+    if (String(password) !== String(confirmPassword)) {
+      return res.status(400).json({ message: "Passwords do not match" });
     }
 
     const resetToken = String(req.params.token || req.body.token || "").trim();
@@ -61,7 +90,9 @@ const resetPasswordHandler = async (req, res) => {
     });
 
     if (!user) {
-      return res.status(400).json({ message: "Reset token is invalid or expired" });
+      return res
+        .status(400)
+        .json({ message: "Reset token is invalid or expired" });
     }
 
     user.password_hash = password;
@@ -154,10 +185,13 @@ router.post("/forgot-password", async (req, res) => {
     }
 
     const user = await User.findOne({ email: normalizedEmail });
+    const genericSuccessMessage =
+      "If an account with that email exists, password reset instructions have been sent.";
 
     if (!user) {
       return res.json({
-        message: "If an account with that email exists, a reset link has been created.",
+        success: true,
+        message: genericSuccessMessage,
       });
     }
 
@@ -168,38 +202,51 @@ router.post("/forgot-password", async (req, res) => {
       .digest("hex");
 
     user.reset_password_token = hashedToken;
-    user.reset_password_expires = new Date(Date.now() + 60 * 60 * 1000);
+    user.reset_password_expires = new Date(
+      Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000
+    );
     await user.save();
 
     const frontendBaseUrl = getFrontendBaseUrl(req);
-    const resetUrl = `${frontendBaseUrl.replace(/\/$/, "")}/reset-password/${resetToken}`;
-    const shouldReturnResetLink =
-      !isMailerConfigured || process.env.SHOW_RESET_LINK === "true";
+    const resetUrl = `${frontendBaseUrl.replace(
+      /\/$/,
+      ""
+    )}/reset-password/${resetToken}`;
+    const requestMetadata = {
+      fullName: user.full_name,
+      resetUrl,
+      expiresInMinutes: RESET_TOKEN_TTL_MINUTES,
+      resetRequestedAt: new Date().toISOString(),
+      ipAddress: getRequestIp(req),
+    };
 
     if (isMailerConfigured) {
       try {
-        await sendPasswordResetEmail(user.email, {
-          fullName: user.full_name,
-          resetUrl,
-          token: resetToken,
-        });
+        await Promise.all([
+          sendPasswordResetEmail(user.email, requestMetadata),
+          sendPasswordResetSecurityNotification(user.email, requestMetadata),
+        ]);
       } catch (emailError) {
-        console.error("Failed to send password reset email:", emailError.message);
+        console.error(
+          "Failed to send password reset email:",
+          emailError.message
+        );
       }
     }
 
     res.json({
       success: true,
-      message: isMailerConfigured
-        ? "If an account with that email exists, password reset instructions have been sent."
-        : "If an account with that email exists, a reset link has been generated.",
-      ...(shouldReturnResetLink
+      message: genericSuccessMessage,
+      expiresAt: user.reset_password_expires,
+      ...(shouldReturnResetDebugData()
         ? {
-            resetToken,
             resetUrl,
+            debugNotice:
+              "SMTP is not configured, so this reset email was not actually sent. Use the debug reset link below for local development.",
+            securityNotificationPreview:
+              "A password reset was requested for your account.",
           }
         : {}),
-      expiresAt: user.reset_password_expires,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });

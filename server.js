@@ -1,15 +1,18 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const path = require("path");
 const dotenv = require("dotenv");
 const Category = require("./models/Category");
 const defaultCategories = require("./defaultCategories");
 const { verifyCloudinaryConfig, pingCloudinary } = require("./config/cloudinary");
 const { verifyMailerConfig } = require("./config/mailer");
+const { ensureUploadsDir } = require("./config/localUpload");
 
 dotenv.config();
 
 const app = express();
+ensureUploadsDir();
 
 const allowedOrigins = [
   "http://localhost:3000",
@@ -42,8 +45,10 @@ app.use(
 );
 
 app.use(express.json());
+app.use("/uploads", express.static(path.resolve(__dirname, "uploads")));
 
 app.use("/api/auth", require("./routes/auth"));
+app.use("/api/upload", require("./routes/upload"));
 app.use("/api/cases", require("./routes/cases"));
 app.use("/api/donations", require("./routes/donations"));
 app.use("/api/item-donations", require("./routes/itemDonations"));
@@ -97,11 +102,12 @@ app.use((err, req, res, next) => {
   console.error("Error:", err);
   res.status(500).json({
     success: false,
-    message: "Something went wrong!",
+    message: err?.message || "Something went wrong!",
+    ...(process.env.NODE_ENV !== "production" && err?.stack ? { stack: err.stack } : {}),
   });
 });
 
-const PORT = process.env.PORT || 5001;
+const PORT = 5001;
 
 const ensureDefaultCategories = async () => {
   try {

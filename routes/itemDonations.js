@@ -41,7 +41,6 @@ router.post("/", protect, handleSubcategoryUploadErrors, async (req, res) => {
       itemType,
       condition,
       quantity,
-      image,
       location,
       expiresAt,
       contactPhone,
@@ -51,12 +50,12 @@ router.post("/", protect, handleSubcategoryUploadErrors, async (req, res) => {
       return res.status(400).json({ success: false, message: "Title, description, category, and city are required" });
     }
 
-    // Upload image file if provided; otherwise fall back to URL from body
-    let imageUrl = image || "";
-    if (req.file) {
-      const result = await uploadToCloudinary(req.file.buffer, { folder: "item-donations" });
-      imageUrl = result.secure_url;
+    // Only uploaded file required for image
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "Item image file is required" });
     }
+    const result = await uploadToCloudinary(req.file.buffer, { folder: "item-donations" });
+    const imageUrl = result.secure_url;
 
     const item = await ItemDonation.create({
       donor_id: req.user._id,

@@ -33,16 +33,16 @@ router.get("/:id", async (req, res) => {
 // POST /api/categories — admin only
 router.post("/", protect, adminOnly, handleSubcategoryUploadErrors, async (req, res) => {
   try {
-    const { name, slug, emoji, description, nameAr, descriptionAr, icon, image } = req.body;
+    const { name, slug, emoji, description, nameAr, descriptionAr, icon } = req.body;
     const exists = await Category.findOne({ slug });
     if (exists) return res.status(400).json({ message: "Category already exists" });
 
-    // Upload image file if provided; otherwise fall back to URL from body
-    let imageUrl = image || "";
-    if (req.file) {
-      const result = await uploadToCloudinary(req.file.buffer, { folder: "categories" });
-      imageUrl = result.secure_url;
+    // Only uploaded file required for image
+    if (!req.file) {
+      return res.status(400).json({ message: "Category image file is required" });
     }
+    const result = await uploadToCloudinary(req.file.buffer, { folder: "categories" });
+    const imageUrl = result.secure_url;
 
     const cat = await Category.create({
       name,

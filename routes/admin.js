@@ -132,9 +132,6 @@ router.post("/cases", handleCaseUploadErrors, async (req, res) => {
       }
     }
 
-    if (!imageUrl) {
-      return res.status(400).json({ message: "Case image is required" });
-    }
 
     // ── Gallery ──────────────────────────────────────────────────────────────
     let galleryUrls = [];

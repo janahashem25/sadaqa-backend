@@ -319,9 +319,6 @@ exports.createCase = async (req, res) => {
       imageUrl = String(req.body.image).trim();
     }
 
-    if (!imageUrl) {
-      return res.status(400).json({ success: false, message: "Case image is required" });
-    }
 
     // ── Gallery ─────────────────────────────────────────────────────────────
     // Only uploaded files
