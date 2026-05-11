@@ -1,50 +1,27 @@
-const nodemailer = require("nodemailer");
+const { Resend } = require('resend');
 
-const isMailerConfigured = Boolean(
-  process.env.SMTP_HOST &&
-  process.env.SMTP_PORT &&
-  process.env.SMTP_USER &&
-  process.env.SMTP_PASS
-);
+const isMailerConfigured = Boolean(process.env.RESEND_API_KEY);
 
-const transporter = isMailerConfigured
-  ? nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT),
-      secure:
-        process.env.SMTP_SECURE === "true" || process.env.SMTP_PORT === "465",
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-    })
+const resend = isMailerConfigured
+  ? new Resend(process.env.RESEND_API_KEY)
   : null;
 
-const emailFrom =
-  process.env.EMAIL_FROM ||
-  `Sadaqa <${process.env.SMTP_USER || "no-reply@example.com"}>`;
-
-const escapeHtml = (value = "") =>
-  String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+const emailFrom = process.env.EMAIL_FROM || 'Sadaqa <noreply@sadaqa.app>';
 
 const verifyMailerConfig = async () => {
   if (!isMailerConfigured) {
     console.warn(
-      "SMTP mailer is not configured. Forgot password emails will not be sent."
+      "Resend API key is not configured. Forgot password emails will not be sent."
     );
     return;
   }
 
   try {
-    await transporter.verify();
-    console.log("SMTP mailer configured and ready.");
+    // Test the API key by attempting to get domains (lightweight call)
+    await resend.domains.list();
+    console.log("Resend mailer configured and ready.");
   } catch (error) {
-    console.warn("SMTP mailer verification failed:", error.message);
+    console.warn("Resend mailer verification failed:", error.message);
   }
 };
 
@@ -58,34 +35,82 @@ const sendPasswordResetEmail = async (recipientEmail, options = {}) => {
     fullName = "Sadaqa user",
     expiresInMinutes = 20,
   } = options;
-  const safeName = escapeHtml(fullName);
-  const safeResetUrl = escapeHtml(resetUrl);
-  const subject = "Sadaqa Password Reset Instructions";
-  const text =
-    `Hello ${fullName},\n\n` +
-    `A password reset was requested for your account.\n\n` +
-    `Use the link below to reset your password:\n${resetUrl}\n\n` +
-    `This link expires in ${expiresInMinutes} minutes.\n\n` +
-    `If you did not request this, ignore this email. No password changes have been made.\n\n` +
-    `Thanks,\nThe Sadaqa Team`;
 
+  const subject = "Sadaqa Password Reset Instructions";
   const html = `
-    <p>Hello ${safeName},</p>
-    <p><strong>A password reset was requested for your account.</strong></p>
-    <p>Use the secure link below to reset your password:</p>
-    <p><a href="${safeResetUrl}">${safeResetUrl}</a></p>
-    <p>This link expires in <strong>${expiresInMinutes} minutes</strong>.</p>
-    <p>If you did not request this, ignore this email. No password changes have been made.</p>
-    <p>Thanks,<br/>The Sadaqa Team</p>
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Password Reset</title>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .button { display: inline-block; background: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0; }
+        .footer { font-size: 12px; color: #666; margin-top: 30px; }
+        .warning { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 6px; margin: 20px 0; }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>Sadaqa Password Reset</h1>
+      </div>
+
+      <p>Hello ${fullName},</p>
+
+      <p><strong>A password reset was requested for your account.</strong></p>
+
+      <p>Use the secure link below to reset your password:</p>
+
+      <a href="${resetUrl}" class="button">Reset My Password</a>
+
+      <p><strong>This link expires in ${expiresInMinutes} minutes.</strong></p>
+
+      <div class="warning">
+        <p><strong>Security Notice:</strong> If you did not request this password reset, please ignore this email. No password changes have been made to your account.</p>
+      </div>
+
+      <p>If the button doesn't work, copy and paste this link into your browser:</p>
+      <p><a href="${resetUrl}">${resetUrl}</a></p>
+
+      <p>Thanks,<br/>The Sadaqa Team</p>
+
+      <div class="footer">
+        <p>This is an automated email. Please do not reply to this message.</p>
+      </div>
+    </body>
+    </html>
   `;
 
-  return transporter.sendMail({
+  const text = `
+Hello ${fullName},
+
+A password reset was requested for your account.
+
+Use the link below to reset your password:
+${resetUrl}
+
+This link expires in ${expiresInMinutes} minutes.
+
+Security Notice: If you did not request this password reset, please ignore this email. No password changes have been made to your account.
+
+Thanks,
+The Sadaqa Team
+
+---
+This is an automated email. Please do not reply to this message.
+  `.trim();
+
+  const result = await resend.emails.send({
     from: emailFrom,
     to: recipientEmail,
     subject,
-    text,
     html,
+    text,
   });
+
+  return result;
 };
 
 const sendPasswordResetSecurityNotification = async (
@@ -101,35 +126,76 @@ const sendPasswordResetSecurityNotification = async (
     resetRequestedAt = new Date().toISOString(),
     ipAddress = "Unavailable",
   } = options;
-  const safeName = escapeHtml(fullName);
-  const safeTimestamp = escapeHtml(resetRequestedAt);
-  const safeIpAddress = escapeHtml(ipAddress);
-  const subject = "Security Notice: Password Reset Requested";
-  const text =
-    `Hello ${fullName},\n\n` +
-    `A password reset was requested for your account.\n` +
-    `Time: ${resetRequestedAt}\n` +
-    `IP address: ${ipAddress}\n\n` +
-    `If this was you, follow the password reset instructions email.\n` +
-    `If this was not you, you can ignore the reset email and consider changing your password after signing in.\n\n` +
-    `Thanks,\nThe Sadaqa Team`;
 
+  const subject = "Security Notice: Password Reset Requested";
   const html = `
-    <p>Hello ${safeName},</p>
-    <p><strong>A password reset was requested for your account.</strong></p>
-    <p>Time: ${safeTimestamp}<br />IP address: ${safeIpAddress}</p>
-    <p>If this was you, follow the password reset instructions email.</p>
-    <p>If this was not you, you can ignore the reset email and consider changing your password after signing in.</p>
-    <p>Thanks,<br/>The Sadaqa Team</p>
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Security Notice</title>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .security { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 6px; margin: 20px 0; }
+        .footer { font-size: 12px; color: #666; margin-top: 30px; }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>Security Notice</h1>
+      </div>
+
+      <p>Hello ${fullName},</p>
+
+      <div class="security">
+        <p><strong>A password reset was requested for your account.</strong></p>
+        <p><strong>Time:</strong> ${resetRequestedAt}<br/>
+        <strong>IP Address:</strong> ${ipAddress}</p>
+      </div>
+
+      <p><strong>If this was you:</strong> Follow the password reset instructions in the separate email we sent.</p>
+
+      <p><strong>If this was not you:</strong> You can safely ignore the reset email. Consider changing your password after signing in to ensure your account security.</p>
+
+      <p>Thanks,<br/>The Sadaqa Team</p>
+
+      <div class="footer">
+        <p>This is an automated security notification. Please do not reply to this message.</p>
+      </div>
+    </body>
+    </html>
   `;
 
-  return transporter.sendMail({
+  const text = `
+Hello ${fullName},
+
+SECURITY NOTICE: A password reset was requested for your account.
+
+Time: ${resetRequestedAt}
+IP Address: ${ipAddress}
+
+If this was you: Follow the password reset instructions in the separate email we sent.
+
+If this was not you: You can safely ignore the reset email. Consider changing your password after signing in to ensure your account security.
+
+Thanks,
+The Sadaqa Team
+
+---
+This is an automated security notification. Please do not reply to this message.
+  `.trim();
+
+  const result = await resend.emails.send({
     from: emailFrom,
     to: recipientEmail,
     subject,
-    text,
     html,
+    text,
   });
+
+  return result;
 };
 
 module.exports = {
